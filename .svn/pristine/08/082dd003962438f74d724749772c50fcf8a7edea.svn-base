@@ -1,0 +1,168 @@
+<?php
+namespace Lanix;
+use PrestaShop\PrestaShop\Adapter\Entity\Db;
+use PrestaShop\PrestaShop\Adapter\Entity\DbQuery;
+
+class LxUtilDB
+{
+
+    //all tbl
+    public static function saveData ($table, $data){
+       return Db::getInstance()->insert(
+            $table,
+            $data,
+            false,
+            true,
+            Db::REPLACE
+        );
+    }
+
+    public static function deleteWhere($table, $condition)
+    {
+        return Db::getInstance()->delete($table, $condition);
+    }
+
+
+    public static function selectWhere ($table, $select, $condition = null){
+
+        $sql = new DbQuery();
+        $sql->from($table);
+        $sql->select($select);
+        if ($condition != null) $sql->where($condition);
+
+        return Db::getInstance()->getValue($sql);
+    }
+
+    public static function selectAll ($table, $select, $condition = null){
+
+        $sql = new DbQuery();
+        $sql->from($table);
+        $sql->select($select);
+        if ($condition != null) $sql->where($condition);
+
+        return Db::getInstance()->executeS($sql);
+    }
+
+    // tbl Products , tbl Customers
+
+    /**
+     * @param $table
+     * @param $lxCod
+     * @return false|string|null
+     */
+    public static function getIdPShopByLxCod ($table, $lxCod){
+
+        $sql = new DbQuery();
+        $sql->from($table);
+        $sql->select('id_pshop');
+        $sql->where('lx_codigo = "'.$lxCod.'"');
+        return Db::getInstance()->getValue($sql);
+    }
+
+
+    //tbl genericas
+    public static function selectFromTblGenericaWhere ($select,$codtabla, $condition){
+
+        $sql = new DbQuery();
+        $sql->from('lx_tabla_generica');
+        $sql->select($select);
+        $sql->where('codigo_tabla = "'.$codtabla.'" AND '.$condition);
+        return Db::getInstance()->getValue($sql);
+    }
+
+
+
+    public static function getIdPshopFromTblGenericaByCodigo ($codtabla, $codigo){
+
+        $sql = new DbQuery();
+        $sql->from('lx_tabla_generica');
+        $sql->select('id_pshop');
+        $sql->where('codigo_tabla = "'.$codtabla.'" AND codigo = "'.$codigo.'"');
+        return Db::getInstance()->getValue($sql);
+    }
+
+    public static function getCodigoFromTblGenericaByIdPShop ($codtabla, $idPShop){
+
+        $sql = new DbQuery();
+        $sql->from('lx_tabla_generica');
+        $sql->select('codigo');
+        $sql->where('codigo_tabla = "'.$codtabla.'" AND id_pshop = "'.$idPShop.'"');
+        return Db::getInstance()->getValue($sql);
+    }
+
+
+    //tbl customers
+    public static function getRutById ($id){
+        $sql = new DbQuery();
+        $sql->from('lx_customers');
+        $sql->select('vch_rut');
+        $sql->where('id_pshop = '. (int)$id);
+        return Db::getInstance()->getValue($sql);
+    }
+
+
+    public static function getIdPersonaByLxCodigo ($lxCodigo) {
+
+        $sql = new DbQuery();
+        $sql->from('lx_customers');
+        $sql->select('id_pshop');
+        $sql->where('lx_codigo = "'. $lxCodigo.'"');
+        return Db::getInstance()->getValue($sql);
+
+    }
+
+    /**
+     * @param $rut
+     * @return false|string|null
+     */
+    public static function checkRutExists ($rut){
+        $sql = new DbQuery();
+        $sql->from('lx_customers');
+        $sql->select('vch_rut');
+        $sql->where('vch_rut = "'. $rut.'"');
+        return Db::getInstance()->getValue($sql);
+    }
+
+    public static function saveLxCustomers ($id, $lxCodigo, $rut, $numRut, $dvRut) {
+
+        Db::getInstance()->insert(
+                'lx_customers',
+                [
+                    'lx_codigo' => $lxCodigo,
+                    'id_pshop' => (int)$id,
+                    'vch_rut' => strtoupper($rut),
+                    'int_rut' => $numRut,
+                    'dv' => (int)$dvRut
+                ],
+                false,
+                true,
+                Db::REPLACE
+            );
+
+    }
+
+
+    //tbl sincronizacion
+    public static function updateTblSync ($resource){
+        return Db::getInstance()->insert(
+            'lx_sincronizacion',
+            [
+                'tabla' => $resource,
+                'fecha' => date('Y-m-d H:i:s')
+            ],
+            false,
+            true,
+            Db::REPLACE);
+    }
+
+    public static function getSyncDate ($resource){
+        $sql = new DbQuery();
+        $sql->from('lx_sincronizacion');
+        $sql->select('fecha');
+        $sql->where('tabla = "'. $resource.'"');
+        return Db::getInstance()->getValue($sql);
+
+    }
+
+
+}

@@ -1,0 +1,154 @@
+<?php
+
+
+namespace Lanix;
+
+use Lanix\LxRestClient;
+use Lanix\LxDeserializer;
+use Lanix\LxUtilDB;
+use Lanix\LxCommands;
+use PrestaShop\PrestaShop\Adapter\Entity\Configuration;
+use PrestaShop\PrestaShop\Adapter\Entity\PrestaShopLogger;
+use PrestaShop\PrestaShop\Adapter\Entity\Search;
+use PrestaShop\PrestaShop\Adapter\Entity\Tools;
+use Doctrine\Common\Annotations\AnnotationRegistry;
+
+class LxControlSync {
+
+    public function run (){
+
+        $this->runCommands();
+        $this->syncData();
+        $this->enviarNotasPendientes();
+
+    }
+
+
+
+    private function syncData ()
+    {
+        AnnotationRegistry::registerLoader('class_exists');
+        //PrestaShopLogger::addLog('Sincronización a las ' . date("H:i:s"), 1);
+        $entities = array('clientes', 'familias', 'subfamilias', 'productos', 'saldos', 'comunas');
+
+        foreach ($entities as $entity) {
+            $fullDate = LxUtilDB::getSyncDate($entity);
+
+            $params = array(
+                'fecModif' => date("Ymd", strtotime($fullDate)),
+                'horaModif' => date("His", strtotime($fullDate))
+            );
+
+            if ($entity == 'productos') {
+                $params = array(
+                    'fecModif' => date("Ymd", strtotime($fullDate)),
+                    'horaModif' => date("His", strtotime($fullDate)),
+                    'listaPrecio' => Configuration::get('LX_LISTAPRECIOS')
+                );
+            }
+
+            if ($entity == 'comunas') {
+                $params = array(
+                    'fecModif' => date("Ymd", strtotime($fullDate)),
+                    'horaModif' => date("His", strtotime($fullDate)),
+                    'codPais' => '001'
+                );
+            }
+
+            if ($entity == 'saldos') {
+                $data = LxRestClient::getData($entity . '/' . Configuration::get('LX_COD_BODEGA'), $params);
+            } else {
+                $data = LxRestClient::getData($entity, $params);
+            }
+
+            $deserializador = new LxDeserializer();
+            if ($data != null) {
+                $deserializador->parse($data);
+                Search::indexation(Tools::getValue('full'));
+                $count = $deserializador->getCountElements();
+
+                if ($count > 0) {
+                    PrestaShopLogger::addLog('Sincronización de ' . $entity . ' a las ' . date("H:i:s")
+                        . ' Datos totales de consulta: ' . $count, 1);
+                }
+
+            }
+        }
+    }
+
+    private function enviarNotasPendientes () {
+
+        $ventasNoEnviadas = LxUtilDB::selectAll(
+            'lx_ventas',
+            'xml,ps_reference',
+            'estado = "no enviado"'
+        );
+
+        foreach ($ventasNoEnviadas as $venta) {
+
+            $res = LxRestClient::postData('venta', $venta['xml']);
+
+            if ($res->getStatusCode() == 202){
+                LxUtilDB::deleteWhere(
+                    'lx_ventas',
+                    'ps_reference = "'.$venta['ps_reference'].'" AND folio = -1'
+                );
+
+
+                $xmlRes = simplexml_load_string($res->getContent());
+                $folio = $xmlRes->key->folio;
+
+                $data = [
+                    'ps_reference' => $venta['ps_reference'],
+                    'tipo_doc' => '185',
+                    'folio' => $folio,
+                    'xml' => '',
+                    'estado' => 'enviado'
+                ];
+                LxUtilDB::saveData('lx_ventas',$data);
+            }
+        }
+
+    }
+
+
+    private function runCommands (){
+
+        $fullDate = LxUtilDB::getSyncDate('comandos');
+
+        $params = array(
+            'fecModif' => date("Ymd", strtotime($fullDate)),
+            'horaModif' => date("His", strtotime($fullDate))
+        );
+
+        $data = LxRestClient::getData('comandos', $params);
+
+        $xml = simplexml_load_string($data);
+
+        foreach ($xml->comandos as $command){
+            switch ($command->nombre){
+                case 'CTA_BORRAR':
+                    LxCommands::deleteUser($command);
+                    break;
+                case 'PROD_BORRAR':
+                    LxCommands::deleteProduct($command);
+                    break;
+                case 'PROD_CAMBIOCOD':
+                    LxCommands::updateLxCodProduct($command);
+                    break;
+                case 'PRE_BORRAR':
+                    LxCommands::deletePriceProduct($command);
+                    break;
+                case 'DOC_ENVIAR':
+                    //dump($command);
+                    break;
+                default:
+                    break;
+
+            }
+        }
+        LxUtilDB::updateTblSync('comandos');
+
+    }
+
+}

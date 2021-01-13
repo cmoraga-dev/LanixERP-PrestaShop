@@ -1,0 +1,37 @@
+<?php
+/**
+ * <ModuleName> => lanix
+ * <FileName> => checkTimer.php
+ * Format expected: <ModuleName><FileName>ModuleFrontController
+ */
+
+class LanixCheckTimerModuleFrontController extends ModuleFrontController {
+
+    /** @var bool If set to true, will be redirected to authentication page */
+    public $auth = false;
+
+    /** @var bool */
+    public $ajax;
+
+    public function display() {
+        $this->ajax = 1;
+
+        if (php_sapi_name() !== 'cli') {
+//            $this->ajaxRender('Forbidden call.');
+        }
+
+        // Additional token checks
+
+        // prueba de codigo con cron
+        //if (extension_loaded('ev')) return;
+        if (!extension_loaded('ev')) return;
+
+        $pid = Configuration::get('LX_PID'); //false if not found
+        if ($pid == false | !file_exists("/proc/$pid")) {
+            $this->ajaxRender("not running");
+        }else
+            $this->ajaxRender("running");
+    }
+
+
+}

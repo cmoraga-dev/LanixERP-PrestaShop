@@ -1,0 +1,44 @@
+{
+  "authors": [
+    {
+      "name": "Lanix ERP",
+      "email": "ingeniero05@lanixerp.cl"
+    }
+  ],
+  "autoload": {
+    "psr-4": {
+      "Lanix\\": ["util","ws","core"]
+    },
+    "classmap": [
+      "vendor/","classes","core",
+      "util/LxUtilRut.php","util/InputConfigFormHelper.php","core/SingletonTimer.php",
+      "xmlParser/"
+    ],
+    "exclude-from-classmap": []
+  },
+  "config": {
+    "preferred-install": "dist",
+    "prepend-autoloader": false
+  },
+  "description": "módulo para Lanix ERP Advantage",
+  "license": "<???>",
+  "name": "lanix",
+  "require": {
+    "php": ">= 7.0.0",
+    "ext-curl": "*",
+    "ext-libxml": "*",
+    "ext-simplexml": "*",
+    "ext-ev": "*",
+    "symfony/http-client": "^5.1",
+    "symfony/serializer-pack": "^1.0",
+    "sensio/framework-extra-bundle": "^5.5",
+    "symfony/serializer": "^5.1",
+    "symfony/property-access": "^5.1",
+    "ext-xmlreader": "^7.2",
+    "ext-xml": "*",
+    "ext-dom": "*",
+    "jms/serializer": "^3.8",
+    "ext-gd": "^7.2"
+  },
+  "type": "prestashop-module"
+}

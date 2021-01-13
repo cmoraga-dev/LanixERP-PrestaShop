@@ -1,0 +1,189 @@
+<?php /** @noinspection PhpParamsInspection */
+
+namespace Lanix;
+
+use Exception;
+use Symfony\Component\HttpClient\HttpClient;
+use Symfony\Contracts\HttpClient\Exception\TransportExceptionInterface;
+use Symfony\Component\HttpClient\Exception\TransportException;
+use PrestaShop\PrestaShop\Adapter\Entity\Tools;
+use PrestaShop\PrestaShop\Adapter\Entity\PrestaShopLogger;
+use PrestaShop\PrestaShop\Adapter\Entity\Configuration;
+use SimpleXMLElement;
+
+
+class LxRestClient {
+
+    public static function getGrupos (){
+        $response = self::getResponse('grupoClientes');
+        $data = new SimpleXMLElement ($response->getContent());
+        return $data->children();
+    }
+
+    public static function getImage ($codProducto){
+       $response = self::getResponse('producto/imagen/'.$codProducto);
+       if ($response->getStatusCode() == 204) return null;
+       $headers = $response->getHeaders();
+       $contentDisposition = $headers['content-disposition'];
+       $explodedContent = explode('=', $contentDisposition[0]);
+       return ([
+           "content" => $response->getContent(),
+           "name" =>  str_replace('"','',end($explodedContent))]);
+    }
+
+    public static function getCodigoBodega ($codlocal){
+
+        $response = self::getResponse('local/'.$codlocal);
+        $xml = new SimpleXMLElement($response->getContent());
+        $xml = $xml->children()->local;
+        return (string)$xml->bodega->codigo;
+
+    }
+
+    public static function getValoresNetos ($codlocal){
+
+        $response = self::getResponse('local/'.$codlocal);
+        $xml = new SimpleXMLElement($response->getContent());
+        $xml = $xml->children()->local;
+        return (string)$xml->listaPrecios->valoresNetos;
+    }
+
+
+    public static function getResponseTest ($url){
+
+        $response = self::getResponse($url);
+        return $response->getContent();
+
+    }
+
+
+    public static function getClientes($date)
+    {
+        try {
+
+            $response = self::getResponse('clientes'.$date);
+            return $response->getContent();
+
+        }catch (Exception $e){
+            PrestaShopLogger::addLog('Error en LxClienteRest/getClientes:    ' .$e,3);
+            return null;
+        }
+
+    }
+
+    public static function getNombreEmpresa()
+    {
+        $response = self::getResponse('empresa');
+        $datosEmpresa = new SimpleXMLElement ( $response->getContent());
+
+        return $datosEmpresa->razonSocial;
+    }
+
+    public static function getCodigoLocal()
+    {
+        $response = self::getResponse('locales');
+        $data = new SimpleXMLElement ($response->getContent());
+        return $data->children();
+
+    }
+
+    /** validarConexion
+     * Si no hay datos guardados en tabla Configuration,
+     * toma los datos desde el formulario enviados via POST
+     * Si hay datos en la tabla Configuration, toma esos datos
+     *
+     * Luego trata de conectar a WS
+     *
+     * Adicionalmente, agrega en forma manual el rut sin puntos ni guion
+     * a tabla Config, en caso de respuesta exitosa (200)
+     * eventualmente moveré esta logica
+     *
+     * El resto de valores los guarda la clase principal una vez llama
+     * esta función y valida la conexión
+     */
+    public static function validarConexion (){
+
+        $campoRut = explode("-", Tools::getValue('LX_RUT_EMPRESA'));
+        $rut = $campoRut[0];
+        $rut = str_replace('.', '', $rut);
+        $key = Tools::getValue('LX_API_KEY');
+
+        $response = self::getResponseForValidate($rut,$key);
+
+        if ($response->getStatusCode() == 200 &&
+            Configuration::get('LX_RUT_EMPRESA_NUMBER') == null) {
+            Configuration::updateValue('LX_RUT_EMPRESA_NUMBER',$rut);
+        }
+        return $response;
+
+    }
+
+    public static function getData ($api,$queryParams = null){
+        return self::getResponse($api,$queryParams)->getContent();
+    }
+
+    /** getResponse
+     * @param $api - acceso del WS Lanix
+     * @return \Symfony\Contracts\HttpClient\ResponseInterface
+     * @throws TransportExceptionInterface
+     */
+    private static function getResponse ($api,$queryParams = null){
+
+        $rut = Configuration::get('LX_RUT_EMPRESA_NUMBER');
+        $key = Configuration::get('LX_API_KEY');
+
+        $URL = Configuration::get('LX_URL_BASE').$api;
+        $client = HttpClient::create([
+            'headers' => [
+                'codEmpresa' => $rut,
+                'apiKey' => $key,
+            ]
+        ]);
+
+        try {
+            return $client->request('GET', $URL, ['query' => $queryParams]);
+        }catch (TransportExceptionInterface $e){
+            PrestaShopLogger::addLog('Error en getResponse con URL '.$URL.'      '.$e,"3");
+            return null;
+        }
+
+    }
+
+    /**
+     * @param $api
+     * @param $body
+     */
+    public static function postData ($api,$body){
+        $rut = Configuration::get('LX_RUT_EMPRESA_NUMBER');
+        $key = Configuration::get('LX_API_KEY');
+
+        $URL = Configuration::get('LX_URL_BASE').$api;
+        $client = HttpClient::create([
+            'headers' => [
+                'codEmpresa' => $rut,
+                'apiKey' => $key,
+                'Content-Type'=> 'application/xml'
+            ]
+        ]);
+
+        return $client->request('POST', $URL, [
+                'body' => $body]);
+
+
+    }
+
+    private static function getResponseForValidate ($rut,$key){
+
+        $URL = Configuration::get('LX_URL_BASE').'empresa';
+        $client = HttpClient::create([
+            'headers' => [
+                'codEmpresa' => $rut,
+                'apiKey' => $key,
+            ],
+        ]);
+
+        return $client->request('GET', $URL);
+
+    }
+
+}

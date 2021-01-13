@@ -1,0 +1,32 @@
+<?php
+/**
+ * <ModuleName> => lanix
+ * <FileName> => timer.php
+ * Format expected: <ModuleName><FileName>ModuleFrontController
+ */
+class LanixTimerModuleFrontController extends ModuleFrontController {
+
+    /** @var bool If set to true, will be redirected to authentication page */
+    public $auth = false;
+
+    /** @var bool */
+    public $ajax;
+
+    public function display() {
+        $this->ajax = 1;
+
+        if (php_sapi_name() !== 'cli') {
+            $this->ajaxRender('Forbidden call.');
+        }
+
+        // Additional token checks
+
+        // ...
+        $lx = SingletonTimer::getInstance();
+
+
+    }
+
+
+
+}

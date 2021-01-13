@@ -1,0 +1,225 @@
+<?php
+
+/**
+ * Class InputConfigFormHelper
+ * Clase estática que contiene los arrays que forman parte
+ * del formulario de configuración del módulo
+ * Hereda la clase ModuleFrontController para poder acceder a
+ * las clases de PrestaShop
+ */
+use Lanix\LxRestClient;
+class InputConfigFormHelper extends ModuleFrontController
+{
+    public static function getDuplicateBtn () {
+        if (Configuration::get("LX_RUT_EMPRESA") != null
+            && Configuration::get("LX_API_KEY") != null)
+        {
+            return  [
+                'col' => 3,
+                'type' => 'select',
+                'desc' => 'Útil si ya ha creado productos manualmente',
+                'label' => 'Prevenir duplicados en productos importados',
+                'name' => 'LX_PREVENT_DUPLICATES_PRODUCTS',
+                'options' => [
+                    'query' => [
+                        ["id" => "false", "name" => "No"],
+                        ["id" => "true", "name" => "Sí"]
+                        ],
+                    'id' => 'id',
+                    'name' => 'name'
+                ]
+            ];}else return null;
+    }
+
+    public static function getSelectorGroupBtn ($name) {
+        if (Configuration::get("LX_RUT_EMPRESA") != null
+            && Configuration::get("LX_API_KEY") != null)
+        {
+            return  [
+            'col' => 3,
+            'type' => 'select',
+            'name' => $name,
+            'options' => [
+                'query' => self::getSelectorBtnValues("grupoCliente"),
+                'id' => 'id',
+                'name' => 'name'
+            ]
+        ];}else return null;
+    }
+
+    public static function getCampoRut()
+    {
+        return [
+            'col' => 3,
+            'type' => 'text',
+            'desc' => 'RUT registrado en Lanix Advantage',
+            'required' => true,
+            'name' => 'LX_RUT_EMPRESA',
+            'maxlength' => (int)12,
+            'readonly' => self::getReadOnlyStatus(),
+            'label' => 'RUT Empresa'
+        ];
+    }
+
+    public static function getCampoApiKey()
+    {
+        return [
+            'col' => 3,
+            'type' => 'text',
+            'desc' => 'Key proporcionada por Lanix',
+            'name' => 'LX_API_KEY',
+            'label' => 'API Key',
+        ];
+
+    }
+
+
+
+    public static function getCodigosLocal()
+    {
+        if (Configuration::get("LX_RUT_EMPRESA") != null
+        && Configuration::get("LX_API_KEY") != null)
+        {
+             return  $formCodLocal = [
+                    'col' => 3,
+                    'type' => 'select',
+                    'desc' => 'Seleccione el local desde donde importará lista de precios',
+                    'name' => 'LX_COD_LOCAL',
+                    'required' => true,
+                    'label' => 'Local',
+                    'disabled' => self::getDisabledStateLocal(),
+                    'options' => [
+                        'query' => self::getSelectorBtnValues("codlocal"),
+                        'id' => 'id',
+                        'name' => 'name'
+                    ]
+                ];
+
+        }else return null;
+    }
+
+    public static function getFabricantes()
+    {
+        if (Configuration::get("LX_RUT_EMPRESA") != null
+            && Configuration::get("LX_API_KEY") != null) {
+
+            if (Configuration::get('LX_DEFAULT_MANUFACTURER') == null) {
+
+                $razonSocial = LxRestClient::getNombreEmpresa();
+
+                //PrestaShop admite nombres de fabricantes con max 64 chars
+                if (strlen($razonSocial)> 64){
+                    $razonSocial = substr($razonSocial,0,63);
+                }
+                if (Manufacturer::getIdByName($razonSocial) == null) {
+
+                    $manufacturer = new Manufacturer();
+                    $manufacturer->name = $razonSocial;
+                    $manufacturer->active = true;
+                    try {
+                        $manufacturer->save();
+                        Configuration::updateValue('LX_DEFAULT_MANUFACTURER', $manufacturer->id);
+                    } catch (PrestaShopException $e) {
+                        PrestaShopLogger::addLog($e,2);
+                    }
+                }
+            }
+
+            $formCodFabricante = [
+                'type' => 'select',
+                'label' => 'Fabricante por defecto',
+                'desc' => 'Fabricante que será asignado por defecto a los productos importados desde Lanix ERP.',
+                'name' => 'LX_DEFAULT_MANUFACTURER',
+                'required' => true,
+                'options' => [
+                    'query' => self::getSelectorBtnValues("manufacturers"),
+                    'id' => 'id',
+                    'name' => 'name'
+                ]
+            ];
+
+            return $formCodFabricante;
+
+        }else return null;
+
+    }
+
+
+    /** Método que obtiene un array con los objetos que serán
+     * opciones en los campos tipo select o drop list
+     * @param $option : el field que está llamando la función
+     * @return array|null: si no hay opciones, se retorna null
+     */
+    private static function getSelectorBtnValues($option)
+    {
+
+        $options = [];
+
+        switch ($option) {
+
+            case "manufacturers":
+                foreach (Manufacturer::getManufacturers((int)Context::getContext()->language->id, true) as $manufacturer) {
+                    $options[] = [
+                        "id" => (int)$manufacturer['id_manufacturer'],
+                        "name" => $manufacturer['name']
+                    ];
+                }
+                return $options;
+
+            case "grupoCliente":
+                try{
+                    $grupos = LxRestClient::getGrupos();
+
+                    foreach ($grupos as $grupo) {
+                        $options[] = [
+                            "id" => (string)$grupo->codigo,
+                            "name" => (string)$grupo->codigo . ' - ' . (string)$grupo->descripcion
+                        ];
+                    }
+                    return $options;
+                }catch (Exception $e){
+
+                }break;
+
+            case "codlocal":
+
+                try{
+                $locales = LxRestClient::getCodigoLocal();
+
+
+                foreach ($locales as $local) {
+                    $options[] = [
+                        "id" => (string)$local->codigo,
+                        "name" => (string)$local->codigo . ' - ' . (string)$local->descripcion
+                  ];
+                }
+                return $options;}catch (Exception $e){}
+                break;
+
+        }
+
+        return null;
+
+    }
+
+    /** Método que determina si campo está activo o no para edición
+     * @return bool
+     */
+    //  private static function getDisabledState ($field){
+    private static function getReadOnlyStatus()
+    {
+
+        return (Configuration::get("LX_RUT_EMPRESA") != null)
+            && (Configuration::get("LX_API_KEY") != null);
+
+    }
+
+    private static function getDisabledStateLocal() {
+
+        return (Configuration::get("LX_RUT_EMPRESA") != null)
+            && (Configuration::get("LX_API_KEY") != null
+             && (Configuration::get("LX_COD_LOCAL") != null));
+
+    }
+
+}

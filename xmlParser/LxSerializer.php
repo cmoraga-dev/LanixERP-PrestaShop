@@ -1,0 +1,217 @@
+<?php
+
+
+namespace Lanix;
+use JMS\Serializer\Naming\IdenticalPropertyNamingStrategy;
+use Lanix\LxRestClient;
+use Lanix\LxUtilDB;
+use Lanix\Venta;
+use Lanix\SimplePersona;
+use Lanix\SimpleDocumento;
+use PrestaShop\PrestaShop\Adapter\Entity\Customer;
+use PrestaShop\PrestaShop\Adapter\Entity\Cart;
+use PrestaShop\PrestaShop\Adapter\Entity\Carrier;
+use PrestaShop\PrestaShop\Adapter\Entity\Configuration;
+use PrestaShop\PrestaShop\Adapter\Entity\Address;
+use PrestaShop\PrestaShop\Adapter\Entity\Group;
+use PrestaShop\PrestaShop\Adapter\Entity\OrderPayment;
+use PrestaShop\PrestaShop\Adapter\Entity\Order;
+use JMS\Serializer\SerializerBuilder;
+use Symfony\Component\HttpClient\Exception\TransportException;
+use Symfony\Component\HttpClient\Exception\ClientException;
+class LxSerializer
+{
+
+
+    /**
+     * Método que envía xml al ERP para generar nota de venta web
+     */
+    public static function syncVenta ($order, $cart, $folioActual = '-1'){
+        /** @var Order $order */
+        /** @var Cart $cart */
+        /** @var OrderPayment[] $payments */
+        $payments = $order->getOrderPayments();
+        $reference = $order->reference;
+        $customer = new Customer($cart->id_customer);
+        $objetoVenta = new Venta();
+
+        //cliente
+        $cliente = new SimplePersona();
+        $address = new Address($cart->id_address_delivery);
+        $codComuna = LxUtilDB::selectFromTblGenericaWhere(
+            "codigo",
+            "63",
+            'descripcion = "'.$address->city.'"');
+
+        $rut = str_replace(".","",LxUtilDB::getRutById($customer->id));
+
+        $grupoCliente = new Group($customer->id_default_group);
+        $grupo = Configuration::get('LX_GROUP_'.$grupoCliente->name[(int)Configuration::get('PS_LANG_DEFAULT')]);
+//        detalle -> un cliente puede tener varios grupos en PS
+        $cliente
+            ->setRut($rut)
+            ->setRazonSocial($customer->firstname.' '.$customer->lastname)
+            ->setEmail($customer->email)
+            ->setTelefono($address->phone)
+            ->setCodComuna($codComuna)
+            ->setDireccion($address->address1.' '.$address->address2)
+            ->setGiro('PARTICULAR')
+            ->setGrupo($grupo)
+        ;
+
+        //productos
+        $arrayProducts = $cart->getProducts();
+        $arraySimpleProducto = [];
+        foreach ($arrayProducts as $product){
+            $codigoProducto = LxUtilDB::selectWhere(
+                'lx_productos',
+                'lx_codigo',
+                'id_pshop = "'.$product['id_product'].'"');
+
+            $simpleProducto = new SimpleProducto();
+            $simpleProducto
+                ->setCodigoProducto($codigoProducto)
+                ->setCantidad($product['cart_quantity'])
+                ->setPrecio($product['price'])
+            ;
+            $arraySimpleProducto[] = $simpleProducto;
+        }
+
+        //costo transporte
+        if ($cart->getTotalShippingCost()>0) {
+            $carrier = new Carrier ($cart->id_carrier);
+            $transporte = new SimpleProducto();
+            $transporte
+                ->setPrecio($cart->getTotalShippingCost())
+                ->setCantidad(1)
+                ->setCodigoProducto(Configuration::get('LX_CODTRANSPORTE'))
+                ->setComentario($carrier->name)
+            ;
+            $arraySimpleProducto[] = $transporte;
+        }
+
+        //pagos
+
+        $arraySimplePago = [];
+        if (count($payments) > 0) {
+            foreach ($payments as $payment) {
+                if ($payment->amount > 0) {
+                    $simplePago = new SimplePago();
+
+                    if ($payment->payment_method == 'Webpay Plus') {
+
+                        $tipoPago = LxUtilDB::selectWhere('lx_webpay', 'tipo', 'ps_reference = "' . $payment->order_reference . '"');
+                        $codAut = LxUtilDB::selectWhere('lx_webpay', 'autorizacion', 'ps_reference = "' . $payment->order_reference . '"');
+                        if ($tipoPago == "Crédito") {
+                            $cuotas = LxUtilDB::selectWhere('lx_webpay', 'cuotas', 'ps_reference = "' . $payment->order_reference . '"');
+                            $simplePago
+                                ->setCodigoPago('04')
+                                ->setCuotas($cuotas);
+                        } else {
+                            $simplePago->setCodigoPago('03');
+                        }
+                        $simplePago
+                            ->setMontoPago($payment->amount)
+                            ->setCodigoAutorizacion($codAut);
+
+                    } else {
+                        $simplePago
+                            ->setCodigoPago('02')
+                            ->setMontoPago($payment->amount);
+                    }
+                    $arraySimplePago[] = $simplePago;
+                }
+            }
+        }
+
+
+        //documento
+        $simpleDoc = new SimpleDocumento();
+        $simpleDoc
+            ->setTipo("185")
+            ->setTipoTotal('B')
+            ->setFecha(date('Ymd'))
+            ->setLocal(Configuration::get('LX_COD_LOCAL'))
+            ->setRutCliente( $rut)
+            ->setTerminal("PrestaShop")
+            ->setProductos($arraySimpleProducto)
+            ->setPagos($arraySimplePago)
+            ->setFolio($folioActual)
+        ;
+
+
+
+        //objeto venta
+        $objetoVenta
+            ->setCliente($cliente)
+            ->setDocumento($simpleDoc)
+        ;
+
+
+        $serializer = SerializerBuilder::create()
+            ->setPropertyNamingStrategy(new IdenticalPropertyNamingStrategy())
+            ->build()
+        ;
+
+        $xml = $serializer->serialize($objetoVenta, 'xml');
+//        $myfile = fopen("serializer.xml", "w") or die("Unable to open file!");
+//        fwrite($myfile, $xml);
+
+
+        try {
+
+            $res = LxRestClient::postData("venta", $xml);
+
+            if ($res->getStatusCode() == 202){
+                $xmlRes = new \SimpleXMLElement($res->getContent());
+                $folio = $xmlRes->key->folio;
+
+                $data = [
+                 'ps_reference' => $reference, //cambiar por id
+                 'tipo_doc' => Configuration::get('LX_TIPODOC'),
+                 'folio' => $folio,
+                 'xml' => '',
+                 'estado' => 'enviado'
+                ];
+                LxUtilDB::saveData('lx_ventas',$data);
+            }else{
+                $data = [
+                    'ps_reference' => $reference,
+                    'tipo_doc' => Configuration::get('LX_TIPODOC'),
+                    'folio' => '-1',
+                    'xml' => $xml,
+                    'estado' => 'no enviado'
+                ];
+                LxUtilDB::saveData('lx_ventas',$data);
+
+            }
+
+            return $res;
+
+        }catch (TransportException $e){
+
+            $data = [
+                'ps_reference' => $reference,
+                'tipo_doc' => Configuration::get('LX_TIPODOC'),
+                'folio' => '-1',
+                'xml' => $xml,
+                'estado' => 'no enviado'
+            ];
+            LxUtilDB::saveData('lx_ventas',$data);
+            return $e->getMessage();
+        }catch (ClientException $e){
+
+            $data = [
+                'ps_reference' => $reference,
+                'tipo_doc' => Configuration::get('LX_TIPODOC'),
+                'folio' => '-1',
+                'xml' => $xml,
+                'estado' => 'no enviado'
+            ];
+            LxUtilDB::saveData('lx_ventas',$data);
+            return $e->getMessage();
+        }
+
+    }
+
+}

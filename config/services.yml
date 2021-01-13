@@ -1,0 +1,22 @@
+# yourmodule/config/services.yml
+services:
+  _defaults:
+    public: true
+  Symfony\Component\Serializer\Normalizer\ObjectNormalizer:
+    class: Symfony\Component\Serializer\Normalizer\ObjectNormalizer
+    public: false
+    tags:
+      - { name: 'serializer.normalizer' }
+
+    Symfony\Component\Serializer\Normalizer\GetSetMethodNormalizer:
+      class: Symfony\Component\Serializer\Normalizer\GetSetMethodNormalizer
+      public: false
+      tags:
+        - { name: 'serializer.normalizer' }
+
+  lanixerp.lanix.sincronizador:
+    class: lanixerp\lanix\ServicioSincronizacion
+    arguments:
+
+  # Create an alias
+  lanixerp\lanix\ServicioSincronizacion: '@lanixerp.lanix.sincronizador'

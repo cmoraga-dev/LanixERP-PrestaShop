@@ -1,0 +1,35 @@
+<?php
+/**
+ * <ModuleName> => lanix
+ * <FileName> => getComunas.php
+ * Format expected: <ModuleName><FileName>ModuleFrontController
+ */
+use Lanix\LxUtilDB;
+class LanixGetComunasModuleFrontController extends ModuleFrontController {
+
+    /** @var bool If set to true, will be redirected to authentication page */
+    public $auth = false;
+
+    /** @var bool */
+    public $ajax;
+
+    public function display() {
+        $this->ajax = 1;
+
+        if (php_sapi_name() !== 'cli') {
+//            $this->ajaxRender('Forbidden call.');
+        }
+
+        // Additional token checks
+
+        // ...
+        $data = LxUtilDB::selectAll('lx_tabla_generica', '`descripcion`','codigo_tabla = "63"');
+        foreach ($data as $key=>$value){
+            $this->ajaxRender($value['descripcion'].',');
+        }
+
+
+    }
+
+
+}

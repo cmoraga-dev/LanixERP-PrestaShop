@@ -1,0 +1,641 @@
+<?php
+/**
+ * 2007-2020 PrestaShop
+ *
+ * NOTICE OF LICENSE
+ *
+ * This source file is subject to the Academic Free License (AFL 3.0)
+ * that is bundled with this package in the file LICENSE.txt.
+ * It is also available through the world-wide-web at this URL:
+ * http://opensource.org/licenses/afl-3.0.php
+ * If you did not receive a copy of the license and are unable to
+ * obtain it through the world-wide-web, please send an email
+ * to license@prestashop.com so we can send you a copy immediately.
+ *
+ * DISCLAIMER
+ *
+ * Do not edit or add to this file if you wish to upgrade PrestaShop to newer
+ * versions in the future. If you wish to customize PrestaShop for your
+ * needs please refer to http://www.prestashop.com for more information.
+ *
+ * @author    PrestaShop SA <contact@prestashop.com>
+ * @copyright 2007-2020 PrestaShop SA
+ * @license   http://opensource.org/licenses/afl-3.0.php  Academic Free License (AFL 3.0)
+ *  International Registered Trademark & Property of PrestaShop SA
+ */
+
+use Lanix\LxControlSync;
+use Lanix\SingleProcess;
+use Lanix\LxUtilDB;
+use Lanix\LxUtilRut;
+use Lanix\LxCustomerHelper;
+use Lanix\LxRestClient;
+use Lanix\PersistentProcess;
+use PrestaShop\PrestaShop\Core\Module\Exception\ModuleErrorException;
+use PrestaShop\PrestaShop\Adapter\Entity\Order;
+use Symfony\Component\Process\Process;
+use Symfony\Component\HttpClient\Exception\TransportException;
+use Symfony\Component\HttpClient\Exception\ClientException;
+use Lanix\LxSerializer;
+
+if (!defined('_PS_VERSION_')) {
+    exit;
+}
+
+//actionModuleInstallAfter
+class Lanix extends Module
+{
+    protected $config_form = true;
+    protected $formValues = [];
+    public function __construct()
+    {
+
+        $this->name = 'lanix';
+        $this->tab = 'administration';
+        $this->version = '1.0';
+        $this->author = 'LanixERP';
+        $this->need_instance = 0;
+
+        /**
+         * Set $this->bootstrap to true if your module is compliant with bootstrap (PrestaShop 1.6)
+         */
+        $this->bootstrap = true;
+
+        parent::__construct();
+
+        $this->displayName = $this->l('Lanix PrestaShop');
+        $this->description = $this->l('Módulo para integración con Lanix Advantage');
+        $this->ps_versions_compliancy = ['min' => '1.7', 'max' => _PS_VERSION_];
+    }
+
+    /**
+     * Don't forget to create update methods if needed:
+     * http://doc.prestashop.com/display/PS16/Enabling+the+Auto-Update
+     */
+    public function install()
+    {
+
+        include __DIR__ . '/sql/install.php';
+
+        //url produccion
+        Configuration::updateValue('LX_URL_BASE',
+            'https://ws.lanixerp.cl/WsPOS/web/carroCompras/');
+
+        Configuration::updateValue('LX_INITIAL_LOAD', 'false');
+
+        return parent::install() &&
+
+            $this->registerHook('backOfficeHeader') &&
+            $this->registerHook('actionFrontControllerSetMedia') &&
+            $this->registerHook('backOfficeFooter') &&
+            $this->registerHook('displayHeader') &&
+            $this->registerHook('actionOrderStatusPostUpdate') &&
+
+
+            // Modificar formulario cliente - front office
+            $this->registerHook('ActionObjectCustomerAddAfter') &&
+            $this->registerHook('ActionObjectCustomerUpdateAfter') &&
+            $this->registerHook('additionalCustomerFormFields') &&
+
+            // Modificar formulario cliente - back office
+            $this->registerHook('ActionAdminCustomersFormModifier') &&
+            $this->registerHook('ActionCustomerGridDefinitionModifier') &&
+            $this->registerHook('actionCustomerGridQueryBuilderModifier') &&
+            $this->registerHook('actionCustomerFormBuilderModifier') &&
+            $this->registerHook('actionBeforeCreateCustomerFormHandler') &&
+            $this->registerHook('actionAfterCreateCustomerFormHandler') &&
+            $this->registerHook('actionAfterUpdateCustomerFormHandler') &&
+
+            //validar campo de texto - front office
+            $this->registerHook('validateCustomerFormFields') &&
+
+
+            //despues de confirmar pago
+            $this->registerHook('actionValidateOrder') &&
+
+            //modificar formulario de ordenes de compra
+            $this->registerHook('displayAdminOrder') &&
+
+            $this->registerHook('actionModuleInstallAfter');
+
+
+    }
+
+    public function hookDisplayAdminOrder ($params) {
+
+//        dump($params);
+        $order = new Order($params['id_order']);
+        $reference = $order->reference;
+        $estado = LxUtilDB::selectWhere('lx_ventas','estado','ps_reference = "'.$reference.'"');
+        $folio = LxUtilDB::selectWhere('lx_ventas','folio','ps_reference = "'.$reference.'"');
+        if (!$estado) $estado = 'No sincronizado';
+
+        $this->smarty->assign(array(
+            'LANIX_ESTADO' => $estado,
+            'LANIX_FOLIO' => $folio,
+        ));
+
+        return $this->display($this->local_path,'views/templates/admin/orders.tpl');
+
+
+    }
+
+    public function hookActionValidateOrder ($params){
+        /* @var Order $order */
+        $order = $params['order'];
+
+
+        if ($order->module == 'webpay') {
+
+            $data = [
+                'ps_reference' => $order->reference,
+                'autorizacion' => Context::getContext()->cookie->WEBPAY_VOUCHER_AUTCODE, //autorization code
+                'tipo' =>  Context::getContext()->cookie->WEBPAY_VOUCHER_TIPOPAGO,//Crédito -- Débito
+                'cuotas'=>  Context::getContext()->cookie->WEBPAY_VOUCHER_NROCUOTAS,//5 -- 0
+             ];
+            LxUtilDB::saveData('lx_webpay',$data);
+        }
+
+    }
+
+
+    public function hookActionOrderStatusPostUpdate (array $params)
+    {
+
+        // id de OrderState
+        // 2 = Pago aceptado
+
+        // module_name : forma de pago
+        // "ps_wirepayment" : pago por transferencia
+        //dump($params);
+        //return;
+
+        /** @var Order $order */
+        /** @var Cart $cart */
+        $order = new Order($params['id_order']);
+        $cart = $params['cart'];
+
+
+        if ($params['newOrderStatus']->id == 2) {
+            if (count($order->getOrderPayments()) > 0) {
+                $folio = LxUtilDB::selectWhere('lx_ventas','folio','ps_reference = "'.$order->reference.'"');
+                //dump($folio);
+
+                Doctrine\Common\Annotations\AnnotationRegistry::registerLoader('class_exists');
+                if ($folio > 0) {
+                    $result = LxSerializer::syncVenta($order, $cart, $folio);
+                }else{
+                    $result = LxSerializer::syncVenta($order, $cart);
+                }
+                if ($result->getStatusCode() == 202) {
+                    $this->adminDisplayInformation('Pedido sincronizado correctamente');
+                } else {
+                    $this->context->controller->errors[] = $result->getStatusCode();
+                }
+
+            } else {
+                $this->adminDisplayWarning('Lanix: no se envió nota de venta por no tener pagos asociados');
+            }
+
+        }
+    }
+
+
+    public function hookValidateCustomerFormFields(array $params)
+    {
+
+        $module_fields = $params['fields'];
+        if ($module_fields[0]->getName() == 'rut') {
+            $rut = $module_fields[0]->getValue();
+
+            if (!LxUtilRut::validateRut($rut)) {
+                $module_fields[0]->addError('RUT no válido.');
+                $this->context->controller->errors[] = 'No se pudo guardar información';
+                return 0;
+                }elseif (!(isset($params['cookie']->id_customer)) && LxUtilRut::rutExists($rut)){
+                $module_fields[0]->addError('RUT ya se encuentra registrado');
+                $this->context->controller->errors[] = 'No se pudo guardar información';
+            }
+        }
+
+        return array($module_fields);
+    }
+
+    //agrega rut - back office
+
+    /**
+     * Hook allows to modify Customers grid definition.
+     * This hook is a right place to add/remove columns or actions (bulk, grid).
+     */
+    public function hookActionCustomerGridDefinitionModifier(array $params)
+    {
+        LxCustomerHelper::getGridDefinitionModifier($params);
+    }
+
+    /**
+     * Hook allows to modify Customers query builder and add custom sql statements
+     */
+    public function hookActionCustomerGridQueryBuilderModifier(array $params)
+    {
+        LxCustomerHelper::getGridQueryModifier($params);
+    }
+
+    /** hookActionCustomerFormBuilderModifier
+     * Agrega campo RUT al momento de editar cliente
+     */
+    public function hookActionCustomerFormBuilderModifier($params)
+    {
+        $formBuilder = LxCustomerHelper::getFormModifier($params);
+        $params['data']['rut'] = LxUtilDB::getRutById($params['id']);
+        $formBuilder->setData($params['data']);
+    }
+
+    public function hookActionBeforeCreateCustomerFormHandler (array $params){
+
+        $module_fields = $params['form_data'];
+        $rut = $module_fields['rut'];
+
+        if (!LxUtilRut::validateRut($rut)) {
+            dump('rut no paso validate');
+            throw new ModuleErrorException
+            ('No se pudo guardar información. Rut no válido.');
+        }
+        if (LxUtilRut::rutExists($rut)){
+            dump('rut en uso');
+            throw new ModuleErrorException
+            ('No se pudo guardar información. Rut ya está en uso.');
+        }
+
+    }
+
+    public function hookActionAfterCreateCustomerFormHandler (array $params)
+    {
+        $module_fields = $params['form_data'];
+        $this->saveRutBackOffice($params['form_data'], $params);
+
+    }
+
+    public function hookActionAfterUpdateCustomerFormHandler(array $params)
+    {
+
+        $module_fields = $params['form_data'];
+        $rut = $module_fields['rut'];
+
+
+//        $customer = new Customer($params['id']);
+//        \Lanix\LxSerializer::customerToPersona($customer);
+
+
+    }
+
+
+
+    //funciones para agregar campo RUT -  desde la tienda (Front)
+
+    /** hookAdditionalCustomerFormFields
+     *
+     * Se crea el campo de formulario y se agrega en posición indicada
+     */
+    public function hookAdditionalCustomerFormFields($params)
+    {
+
+        $format = LxCustomerHelper::getFormField();
+
+        //si ya tiene data, cargar valor en el FormField
+        if (isset($params['cookie']->id_customer)) {
+
+            $rut = LxUtilDB::getRutById($params['cookie']->id_customer);
+            $format[0]->setValue($rut);
+        }
+
+        return $format;
+
+        /*
+         este código requiere modificar   classes/form/CustomerFormatter.php
+         Referencia: https://github.com/PrestaShop/PrestaShop/pull/13119/files
+         Cambio aún no ha sido integrado en versión 1.7.6.6 de PS - tal vez en 1.7
+         Permite definir posición para campo nuevo en formulario de cliente
+
+        // definir posición de nuevo FormField dentro del array
+        //en este caso, después de 'lastname'
+
+        $position = (int) array_search('lastname', array_keys($params['fields']), null) + 1;
+        $fieldcount = count($params['fields']);
+
+        $result = array_merge(
+            array_slice($params['fields'], 0, $position),
+            $format,
+            array_slice($params['fields'], $position - $fieldcount)
+        );
+
+        // Cargar nuevo FormField en el formulario
+
+        $params['fields'] = $result;
+        //*/
+
+    }
+
+    /** hookActionObjectCustomerAddAfter
+     * Se activa después de registro exitoso de nuevo cliente
+     */
+    public function hookActionObjectCustomerAddAfter($params)
+    {
+        $this->saveRut($params['object']->id);
+//        Doctrine\Common\Annotations\AnnotationRegistry::registerLoader('class_exists');
+    }
+
+    /** hookActionObjectCustomerUpdateAfter
+     * Se activa después de actualización de datos por parte del cliente
+     */
+    public function hookActionObjectCustomerUpdateAfter($params)
+    {
+    }
+
+    /**
+     * Los datos de formulario de cliente vienen en formatos distintos
+     * según sea BackOffice o FrontOffice
+     * @param $data -> array con los datos de un cliente especifico
+     * @param $params -> id de cliente especfífico
+     * @throws PrestaShopDatabaseException
+     */
+    private function saveRutBackOffice($data, $params)
+    {
+        $arrayRut = LxUtilRut::quitarPuntos($data['rut']);
+        LxUtilDB::saveLxCustomers($params['id'], $arrayRut[0], $data['rut'],$arrayRut[0], $arrayRut[1]);
+    }
+
+    /** saveRut
+     * guarda el rut ingresado en la tabla propia del módulo 'extiende_clientes'
+     */
+    private function saveRut($id)
+    {
+        if ($rut = Tools::getValue('rut')) {
+            $arrayRut = LxUtilRut::quitarPuntos(pSQL($rut));
+            LxUtilDB::saveLxCustomers($id,$arrayRut[0],pSQL($rut),$arrayRut[0], $arrayRut[1]);
+        }else return false;
+
+    }
+
+//*fin agregar rut
+
+
+    /**
+     * Load the configuration form
+     */
+    public function getContent()
+    {
+        /**
+         * If values have been submitted in the form, process.
+         */
+        if (((bool)Tools::isSubmit('submitLanixModule'))) {
+           $this->postProcess();
+        }
+        /**
+         * If values have been submitted in the form, process.
+         */
+        if (((bool)Tools::isSubmit('module_sync_btn'))) {
+            $this->startSync();
+        }
+
+
+        $this->context->smarty->assign('module_dir', $this->_path);
+        $output = $this->context->smarty->fetch($this->local_path.'views/templates/admin/configure.tpl');
+        //$output = ""; //no se usó el template original
+        return $output . $this->renderForm();
+    }
+
+    /**
+     * Create the form that will be displayed in the configuration of your module.
+     */
+    protected function renderForm()
+    {
+        $helper = new HelperForm();
+
+        $helper->show_toolbar = false;
+        $helper->table = $this->table;
+        $helper->module = $this;
+        $helper->default_form_language = $this->context->language->id;
+        $helper->allow_employee_form_lang = Configuration::get('PS_BO_ALLOW_EMPLOYEE_FORM_LANG', 0);
+
+        $helper->identifier = $this->identifier;
+        $helper->submit_action = 'submitLanixModule';
+        $helper->currentIndex = $this->context->link->getAdminLink('AdminModules', false)
+            . '&configure=' . $this->name . '&tab_module=' . $this->tab . '&module_name=' . $this->name;
+        $helper->token = Tools::getAdminTokenLite('AdminModules');
+
+        $helper->tpl_vars = array(
+            'fields_value' => $this->getConfigFormValues(), /* Add values for your inputs */
+            'languages' => $this->context->controller->getLanguages(),
+            'id_language' => $this->context->language->id,
+        );
+
+        return $helper->generateForm(array($this->getConfigForm()));
+    }
+
+
+    /**
+     * Create the structure of your form.
+     */
+    protected function getConfigForm()
+    {
+        $configForm= [
+            'form' => [
+                'legend' => [
+                    'title' => $this->l('Datos de empresa'),
+                    'icon' => 'icon-cogs',
+                ],
+                'input' => [
+                    InputConfigFormHelper::getCampoRut(),
+                    InputConfigFormHelper::getCampoApiKey(),
+                    InputConfigFormHelper::getCodigosLocal(),
+                    InputConfigFormHelper::getFabricantes(),
+                    InputConfigFormHelper::getDuplicateBtn(),
+
+                ],
+                'submit' => [
+                    'title' => $this->l('Guardar')
+                ],
+            ],
+
+        ];
+
+        foreach (Group::getGroups((int)Context::getContext()->language->id) as $group) {
+            $configForm['form']['input'][] = InputConfigFormHelper::getSelectorGroupBtn('LX_GROUP_'.$group['name']);
+        }
+        return $configForm;
+    }
+
+    /**
+     * Set values for the inputs.
+     */
+    protected function getConfigFormValues() {
+
+        //recoger los nombres de todos los input
+        $all = $this->getConfigForm();
+        $inputs = $all['form']['input'];
+
+        //cargar valores si es que tienen
+        foreach ($inputs as $key=>$value) {
+            $name =  $value['name'];
+            $this->formValues[$name] = Tools::getValue($name,Configuration::get($name));
+        }
+//        dump($this->formValues);
+        return $this->formValues;
+    }
+
+    /**
+     * Handles action after submit
+     */
+    protected function postProcess()
+    {
+
+        try {
+            LxRestClient::validarConexion()->getContent();
+            $this->adminDisplayInformation('Conexión establecida');
+            $parametros = simplexml_load_string(LxRestClient::getData('parametros'));
+            Configuration::updateValue('LX_TIPODOC', (string)$parametros->tipoDocumento);
+            Configuration::updateValue('LX_CODTRANSPORTE', (string)$parametros->productoTransporte);
+
+        }catch (TransportException $e){
+            $this->context->controller->errors[] = $e->getMessage();
+            return;
+        }catch (ClientException $e){
+            if ($e->getCode() == 401){
+                $this->adminDisplayWarning('Error: Revise sus credenciales (RUT Empresa y/o API Key)');
+            }else{
+                $this->context->controller->errors[] = $e->getMessage();
+            }
+            return;
+        }catch (Exception $e){
+            $this->context->controller->errors[] = $e->getMessage();
+            return;
+        }
+
+        $form_values = $this->getConfigFormValues();
+
+        foreach (array_keys($form_values) as $key) {
+            if ($key != "" || !empty($key)) Configuration::updateValue($key, Tools::getValue($key));
+        }
+
+        $this->startSync();
+
+    }
+
+    protected function startSync()
+    {
+        if (Configuration::get('LX_COD_LOCAL') != null) {
+
+            try {
+                Configuration::updateValue('LX_PRECIOSNETOS', LxRestClient::getValoresNetos(Configuration::get('LX_COD_LOCAL')));
+                Configuration::updateValue('LX_COD_BODEGA', LxRestClient::getCodigoBodega(Configuration::get('LX_COD_LOCAL')));
+                Configuration::updateValue('LX_LISTAPRECIOS', LxRestClient::getListaPrecios(Configuration::get('LX_COD_LOCAL')));
+
+            }catch (TransportException $exception){
+                $this->context->controller->errors[] = $exception->getMessage();
+                return;
+            }
+
+
+            if (extension_loaded('ev')){
+                $this->startTimer();
+                $this->adminDisplayInformation('Sincronización corriendo (timer)');
+            }else{
+                $this->startCron();
+                $this->adminDisplayInformation('Sincronización corriendo (cron)');
+            }
+
+        }
+
+
+    }
+
+    private function startTimer ()  {
+
+        $process = new PersistentProcess(['php', 'timer.php']);
+        $process->setWorkingDirectory(__DIR__);
+        $pid = Configuration::get('LX_PID'); //false if not found
+
+        if ($pid == false | !file_exists("/proc/$pid")) {
+            $process->start();
+            Configuration::updateValue('LX_PID', $process->getPid());
+        }
+    }
+
+    private function startCron () {
+
+        if (!Configuration::get('LX_INITIAL_LOAD') == 'true'){
+            $actualizador = new LxControlSync();
+            $actualizador->run();
+            Configuration::updateValue('LX_INITIAL_LOAD', 'true');
+        }
+
+        $cron = new Process('crontab -l |{ cat; echo "*/2 * * * * /usr/bin/flock -n /tmp/lxUpdater.lockfile  /usr/bin/php '.__DIR__.'/lxUpdater.php"; } | crontab -');
+        $cron->run();
+
+    }
+
+
+    /**
+     * Add the CSS & JavaScript files you want to be loaded in the BO.
+     */
+    public function hookBackOfficeHeader()
+    {
+        // if (Tools::getValue('module_name') == $this->name) {
+        $this->context->controller->addJquery();
+        $this->context->controller->addJS($this->_path . 'js/jquery.Rut.js');
+        $this->context->controller->addJS($this->_path . 'js/back.js');
+        $this->context->controller->addJS($this->_path . 'js/createTable.js');
+
+        //}
+    }
+
+    /**
+     * Add the CSS & JavaScript files you want to be added on the FO.
+     */
+    public function hookActionFrontControllerSetMedia($params)
+    {
+        $phpPage = $this->context->controller->php_self;
+
+        $this->context->controller->addJquery();
+        if ('authentication' === $phpPage ||
+            'identity' === $phpPage ||
+            'order' === $phpPage) {
+            $this->context->controller->addJS($this->_path . 'js/jquery.Rut.js');
+            $this->context->controller->addJS($this->_path . 'js/front.js');
+        }
+        if ('address' === $phpPage ||
+            'order' === $phpPage){
+            $this->context->controller->addJquery();
+            $this->context->controller->addJqueryUI('ui.autocomplete');
+            $this->context->controller->registerJavascript('autocomplete','modules/lanix/js/autocomplete.js');
+            //        $this->context->controller->addJS($this->_path . 'js/autocomplete.js');
+        }
+
+
+    }
+
+    public function uninstall()
+    {
+
+        include __DIR__ . '/sql/uninstall.php';
+
+        $kill = new Process(['kill',Configuration::get('LX_PID')]);
+        $kill->run();
+
+        Configuration::deleteByName('LX_PID');
+        Configuration::deleteByName('LX_RUT_EMPRESA');
+        Configuration::deleteByName('LX_RUT_EMPRESA_NUMBER');
+        Configuration::deleteByName('LX_COD_LOCAL');
+        Configuration::deleteByName('LX_API_KEY');
+        Configuration::deleteByName('LX_DEFAULT_MANUFACTURER');
+        Configuration::deleteByName('LX_DEFAULT_GROUP');
+        Configuration::deleteByName('LX_URL_BASE');
+        Configuration::deleteByName('LX_PRECIOSNETOS');
+        Configuration::deleteByName('LX_INITIAL_LOAD');
+        Configuration::deleteByName('LX_LISTAPRECIOS');
+        Configuration::deleteByName('LX_TIPODOC');
+        Configuration::deleteByName('LX_CODTRANSPORTE');
+        return parent::uninstall();
+    }
+
+}

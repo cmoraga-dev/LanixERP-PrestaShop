@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<module>
+    <name>lanix</name>
+    <displayName><![CDATA[Lanix PrestaShop]]></displayName>
+    <version><![CDATA[1.0]]></version>
+    <description><![CDATA[M&oacute;dulo para integraci&oacute;n con Lanix Advantage]]></description>
+    <author><![CDATA[LanixERP]]></author>
+    <tab><![CDATA[administration]]></tab>
+    <is_configurable>1</is_configurable>
+    <need_instance>0</need_instance>
+	<limited_countries></limited_countries>
+</module>
