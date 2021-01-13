@@ -1,4 +1,4 @@
-### Lanix Módulo para PrestaShop
+# Lanix Módulo para PrestaShop
 
 **ES**
 
@@ -14,18 +14,18 @@ En el otro sentido, una vez finalizada una compra en PrestaShop (**una vez esté
 
 ## Funcionamiento del módulo
 
-# Cliente REST
+### Cliente REST
 1. La comunicación de datos entre el sofware ERP y PrestaShop se realiza a través del **Http Client de PHP Symfony [https://symfony.com/doc/current/http_client.html]**, el cual recibe y envía datos a los métodos expuestos por el web service de Lanix ERP (ws/LxRestClient.php).
 
-# XML Parser
+### XML Parser
 2. Para importar grandes volúmenes de datos en XML y separarlos en forma eficiente se usó el **xml parser de PHP [https://www.php.net/manual/es/book.xml.php]** (xmlParser/LxDeserializer.php).
 
 3. Para guardar los datos provenientes de LanixERP y posteriormente transformarlos en objetos de PrestaShop, se crearon clases idénticas a las del ERP, pero con un método save que finalmente almacena los datos en la tienda web (véase /classes).
 
-# SQL
+### SQL
 4. Se usaron tablas de extensión en MySQL para mantener equivalencias de datos, así como un control de sincronización de información (véase directorio /sql).
 
-# EvTimer / Cron
+### EvTimer / Cron
 5. Para mantener la sincronización de la información se usó el siguiente algoritmo: 
 
 1. Se consulta tabla de actualización, se obtiene fecha de última actualización.
