@@ -40,7 +40,26 @@ Como alternativa más simple, se optó también por dar la posibilidad de usar C
 
 El módulo es capaz de determinar si existe EvTimer en el sistema. En caso de no exisir, procede a crear el trabajo en Cron a través de Process.
 
+## Imágenes:
+
+### Instalación:
+
+Se requiere ingresar el RUT de empresa o identificador usado en el ERP, en conjunto con una API Key otorgada por el administrador.
+<img src="https://github.com/cmoraga-dev/lanix-module/blob/master/img/install1.png" width="300" height="500">
+
+### Configuración:
+
+Una vez ingresados el RUT y Key, se desplegará el menú con el resto de parámetros por configurar, necesarios para establecer una correcta comunicación con el WebService de Lanix.
+Una vez completado este formulario, se da inicio al ciclo de actualización y funcionamiento del módulo.
+
+<img src="https://github.com/cmoraga-dev/lanix-module/blob/master/img/install2.png" width="300" height="500">
+
+
+
+
 **Este módulo aún no se considera un trabajo terminado**.
+
+
 
 
 Por cmoraga-dev.
