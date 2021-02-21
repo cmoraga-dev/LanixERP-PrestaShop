@@ -45,14 +45,14 @@ El módulo es capaz de determinar si existe EvTimer en el sistema. En caso de no
 ### Instalación:
 
 Se requiere ingresar el RUT de empresa o identificador usado en el ERP, en conjunto con una API Key otorgada por el administrador.
-<img src="https://github.com/cmoraga-dev/lanix-module/blob/master/img/install1.png" width="300" height="500">
+<img src="https://github.com/cmoraga-dev/lanix-module/blob/master/img/install1.png" width="500" height="300">
 
 ### Configuración:
 
 Una vez ingresados el RUT y Key, se desplegará el menú con el resto de parámetros por configurar, necesarios para establecer una correcta comunicación con el WebService de Lanix.
 Una vez completado este formulario, se da inicio al ciclo de actualización y funcionamiento del módulo.
 
-<img src="https://github.com/cmoraga-dev/lanix-module/blob/master/img/install2.png" width="300" height="500">
+<img src="https://github.com/cmoraga-dev/lanix-module/blob/master/img/install2.png" width="500" height="300">
 
 
 
